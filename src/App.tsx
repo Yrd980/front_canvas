@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import CodeEditor from './components/CodeEditor'
 import LivePreview from './components/LivePreview'
 import PropertyEditor from './components/PropertyEditor'
@@ -30,11 +30,12 @@ function App() {
   const [selectedElement, setSelectedElement] = useState<SelectedElement | null>(null)
   const [changes, setChanges] = useState<Change[]>([])
 
-  const handleElementSelect = (element: SelectedElement) => {
+  // Memoize callback to prevent unnecessary re-renders of LivePreview
+  const handleElementSelect = useCallback((element: SelectedElement) => {
     setSelectedElement(element)
-  }
+  }, [])
 
-  const handlePropertyChange = (property: string, value: string) => {
+  const handlePropertyChange = useCallback((property: string, value: string) => {
     if (!selectedElement) return
 
     const change: Change = {
@@ -54,7 +55,7 @@ function App() {
       ...prev,
       styles: { ...prev.styles, [property]: value }
     } : null)
-  }
+  }, [selectedElement])
 
   return (
     <div className="h-screen flex flex-col bg-gray-900">

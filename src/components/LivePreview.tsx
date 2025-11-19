@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { SelectedElement, Change } from '../types'
 
 interface LivePreviewProps {
@@ -11,7 +11,39 @@ interface LivePreviewProps {
 export default function LivePreview({ code, selectedElement, onElementSelect, changes }: LivePreviewProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const [hoveredPath, setHoveredPath] = useState<string | null>(null)
+  const elementCacheRef = useRef<Map<string, HTMLElement>>(new Map())
 
+  // Memoize getElementPath to use in both useEffects
+  const getElementPath = useCallback((element: HTMLElement): string => {
+    const path: string[] = []
+    let current: HTMLElement | null = element
+
+    while (current && current.tagName !== 'BODY' && current.tagName !== 'HTML') {
+      let selector = current.tagName.toLowerCase()
+
+      // Add classes if available
+      if (current.classList.length > 0) {
+        selector += '.' + Array.from(current.classList).filter(c => !c.includes('overlay')).join('.')
+      }
+
+      // Add index if there are siblings with same tag
+      const siblings = current.parentElement?.children
+      if (siblings && siblings.length > 1) {
+        const sameTagSiblings = Array.from(siblings).filter(s => s.tagName === current!.tagName)
+        if (sameTagSiblings.length > 1) {
+          const index = Array.from(siblings).indexOf(current)
+          selector += `:nth-child(${index + 1})`
+        }
+      }
+
+      path.unshift(selector)
+      current = current.parentElement
+    }
+
+    return path.join(' > ')
+  }, [])
+
+  // Effect 1: Initialize iframe and set up event listeners (only when code changes)
   useEffect(() => {
     const iframe = iframeRef.current
     if (!iframe) return
@@ -50,15 +82,20 @@ export default function LivePreview({ code, selectedElement, onElementSelect, ch
     const setupIframe = () => {
       if (!doc.body) return
 
-      // Apply changes to elements
+      // Build element cache for faster lookups
+      elementCacheRef.current.clear()
+      const elements = doc.querySelectorAll('*')
+      elements.forEach(el => {
+        const path = getElementPath(el as HTMLElement)
+        elementCacheRef.current.set(path, el as HTMLElement)
+      })
+
+      // Apply all existing changes to the fresh iframe
       changes.forEach(change => {
-        const elements = doc.querySelectorAll('*')
-        elements.forEach(el => {
-          const path = getElementPath(el as HTMLElement)
-          if (path === change.elementPath) {
-            (el as HTMLElement).style.setProperty(change.property, change.newValue)
-          }
-        })
+        const element = elementCacheRef.current.get(change.elementPath)
+        if (element) {
+          element.style.setProperty(change.property, change.newValue)
+        }
       })
 
       // Add event listeners for selection
@@ -139,7 +176,23 @@ export default function LivePreview({ code, selectedElement, onElementSelect, ch
     return () => {
       clearTimeout(timeoutId)
     }
-  }, [code, changes, onElementSelect])
+  }, [code, getElementPath, onElementSelect]) // Only depend on code changes
+
+  // Effect 2: Apply property changes without recreating iframe
+  useEffect(() => {
+    if (changes.length === 0) return
+
+    const iframe = iframeRef.current
+    if (!iframe?.contentDocument) return
+
+    // Apply only the latest change
+    const latestChange = changes[changes.length - 1]
+    const element = elementCacheRef.current.get(latestChange.elementPath)
+
+    if (element) {
+      element.style.setProperty(latestChange.property, latestChange.newValue)
+    }
+  }, [changes])
 
   return (
     <div className="h-full flex flex-col bg-gray-800">
@@ -159,33 +212,4 @@ export default function LivePreview({ code, selectedElement, onElementSelect, ch
       </div>
     </div>
   )
-}
-
-function getElementPath(element: HTMLElement): string {
-  const path: string[] = []
-  let current: HTMLElement | null = element
-
-  while (current && current.tagName !== 'BODY' && current.tagName !== 'HTML') {
-    let selector = current.tagName.toLowerCase()
-
-    // Add classes if available
-    if (current.classList.length > 0) {
-      selector += '.' + Array.from(current.classList).join('.')
-    }
-
-    // Add index if there are siblings with same tag
-    const siblings = current.parentElement?.children
-    if (siblings && siblings.length > 1) {
-      const sameTagSiblings = Array.from(siblings).filter(s => s.tagName === current!.tagName)
-      if (sameTagSiblings.length > 1) {
-        const index = Array.from(siblings).indexOf(current)
-        selector += `:nth-child(${index + 1})`
-      }
-    }
-
-    path.unshift(selector)
-    current = current.parentElement
-  }
-
-  return path.join(' > ')
 }
